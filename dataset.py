@@ -6,12 +6,15 @@ Dataset implementation for Ruslan corpus
 import torch
 import torchaudio
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from torch.utils.data import Dataset, Sampler
 from torch.nn.utils.rnn import pad_sequence
 import logging
 import random
 import numpy as np
+import pickle
+import hashlib
+import json
 from tqdm import tqdm
 
 from config import TrainingConfig
@@ -69,13 +72,91 @@ class RuslanDataset(Dataset):
             "obtained from a forced aligner (e.g., Montreal Forced Aligner)."
         )
 
+    def _get_cache_path(self) -> Path:
+        """Get path to the metadata cache file."""
+        return self.data_dir / ".metadata_cache.pkl"
+
+    def _compute_cache_key(self, metadata_file: Path) -> str:
+        """
+        Compute a cache key based on metadata file and config parameters.
+        The key changes when:
+        - The metadata file is modified (mtime/size)
+        - Relevant config parameters change (sample_rate, n_fft, hop_length, etc.)
+        """
+        key_data = {
+            'metadata_file': str(metadata_file),
+            'metadata_mtime': metadata_file.stat().st_mtime if metadata_file.exists() else 0,
+            'metadata_size': metadata_file.stat().st_size if metadata_file.exists() else 0,
+            'sample_rate': self.config.sample_rate,
+            'n_fft': self.config.n_fft,
+            'hop_length': self.config.hop_length,
+            'win_length': self.config.win_length,
+            'max_seq_length': self.config.max_seq_length,
+            'cache_version': 1,  # Increment this when cache format changes
+        }
+        key_str = json.dumps(key_data, sort_keys=True)
+        return hashlib.sha256(key_str.encode()).hexdigest()
+
+    def _load_cache(self, metadata_file: Path) -> Optional[List[Dict]]:
+        """
+        Load cached samples if the cache is valid.
+        Returns None if cache doesn't exist or is invalid.
+        """
+        cache_path = self._get_cache_path()
+        if not cache_path.exists():
+            return None
+
+        try:
+            with open(cache_path, 'rb') as f:
+                cache_data = pickle.load(f)
+
+            # Verify cache key matches
+            expected_key = self._compute_cache_key(metadata_file)
+            if cache_data.get('cache_key') != expected_key:
+                logger.info("Metadata cache invalidated (file or config changed)")
+                return None
+
+            samples = cache_data.get('samples')
+            if samples:
+                logger.info(f"Loaded {len(samples)} samples from cache")
+                return samples
+        except Exception as e:
+            logger.warning(f"Failed to load metadata cache: {e}")
+
+        return None
+
+    def _save_cache(self, samples: List[Dict], metadata_file: Path) -> None:
+        """Save samples to disk cache."""
+        cache_path = self._get_cache_path()
+        cache_key = self._compute_cache_key(metadata_file)
+
+        cache_data = {
+            'cache_key': cache_key,
+            'samples': samples,
+        }
+
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(cache_data, f)
+            logger.info(f"Saved metadata cache to {cache_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save metadata cache: {e}")
+
     def _load_samples(self) -> List[Dict]:
         """
         Load samples from corpus directory and pre-calculate lengths.
+        Uses disk caching to speed up subsequent loads.
         """
+        metadata_file = self.data_dir / "metadata_RUSLAN_22200.csv"
+
+        # Try to load from cache first
+        cached_samples = self._load_cache(metadata_file)
+        if cached_samples is not None:
+            return cached_samples
+
+        logger.info("Building metadata cache (this may take several minutes on first run)...")
         samples = []
 
-        metadata_file = self.data_dir / "metadata_RUSLAN_22200.csv"
         if metadata_file.exists():
             logger.info(f"Loading metadata from {metadata_file}")
             # Get total number of lines for accurate progress bar
@@ -205,6 +286,10 @@ class RuslanDataset(Dataset):
         # Sort samples by their combined length (or just audio_length) for efficient batching
         # Sorting by audio length is generally most impactful for Mel-spectrograms
         samples.sort(key=lambda x: x['audio_length'])
+
+        # Save to cache for faster subsequent loads
+        self._save_cache(samples, metadata_file)
+
         return samples
 
     def __len__(self) -> int:
