@@ -3,4 +3,6 @@ venv
 
 # misc
 .DS_Store
-
+__pycache__/
+/kokoro_russian_model/
+/ruslan_corpus/

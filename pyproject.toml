@@ -1,0 +1,26 @@
+[project]
+name = "kokoro-ruslan"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "absl-py>=0.4",
+    "grpcio>=1.48.2",
+    "librosa>=0.9.0",
+    "markdown>=2.6.8",
+    "numpy>=1.21.0",
+    "pathlib>=1.0.1",
+    "pillow>=12.1.0",
+    "protobuf>=3.19.6,!=4.24.0",
+    "psutil>=7.2.1",
+    "soundfile>=0.12.0",
+    "tensorboard==2.20.0",
+    "tensorboard-data-server>=0.7.0,<0.8.0",
+    "torch>=2.0.0",
+    "torch-tb-profiler==0.4.3",
+    "torchaudio>=2.0.0",
+    "torchcodec>=0.9.1",
+    "tqdm>=4.64.0",
+    "werkzeug>=1.0.1",
+]
